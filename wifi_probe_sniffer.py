@@ -5,6 +5,9 @@ Wi-Fi Probe Request Sniffer
 A tool for capturing and analyzing Wi-Fi probe requests from nearby devices.
 """
 
+__version__ = "1.0.0"
+
+
 import argparse
 import csv
 import json
