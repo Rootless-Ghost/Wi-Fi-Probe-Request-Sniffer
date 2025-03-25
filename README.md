@@ -2,6 +2,18 @@
 
 A Python tool for capturing and analyzing Wi-Fi probe requests from nearby devices.
 
+
+[![Python](https://img.shields.io/badge/Python-3.x-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![Scapy](https://img.shields.io/badge/Scapy-Packet_Manipulation-E10098)](https://scapy.net/)
+[![Linux](https://img.shields.io/badge/Linux-Compatible-333333?logo=linux&logoColor=white)](https://www.linux.org/)
+[![Monitor Mode](https://img.shields.io/badge/Monitor_Mode-Enabled-4CAF50)](https://en.wikipedia.org/wiki/Monitor_mode)
+[![Aircrack-ng](https://img.shields.io/badge/Aircrack--ng-Wireless_Tools-F44336)](https://www.aircrack-ng.org/)
+[![802.11](https://img.shields.io/badge/802.11-Wi--Fi_Protocol-2196F3)](https://en.wikipedia.org/wiki/IEEE_802.11)
+[![MAC Lookup](https://img.shields.io/badge/MAC-Vendor_Lookup-9C27B0)](https://macvendors.com/)
+[![Data Export](https://img.shields.io/badge/Export-CSV%7CJSON-FF9800)](https://en.wikipedia.org/wiki/Comma-separated_values)
+[![Kali Linux](https://img.shields.io/badge/Kali_Linux-Compatible-1A1A1A?logo=kali-linux&logoColor=white)](https://www.kali.org/)
+
+
 ## Overview
 
 When wireless devices search for networks, they broadcast probe request frames containing information about previously connected networks. This tool captures these frames, extracts valuable data (SSIDs, MAC addresses), and displays/logs this information in real-time.
