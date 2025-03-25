@@ -2,229 +2,379 @@
 """
 Wi-Fi Probe Request Sniffer
 
-This script captures and analyzes Wi-Fi probe requests from nearby devices.
-It extracts SSID names, MAC addresses, and provides real-time logging of detected probe requests.
-
-Requirements:
-- Linux system with Wi-Fi card supporting monitor mode
-- Python 3.6+
-- Scapy
-- Requests (for MAC vendor lookup)
-
-Usage:
-    sudo python3 wifi_probe_sniffer.py -i <interface> [options]
+A tool for capturing and analyzing Wi-Fi probe requests from nearby devices.
 """
 
 import argparse
 import csv
 import json
+import logging
 import os
 import signal
 import sys
 import time
 from datetime import datetime
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 try:
-    from scapy.all import Dot11, Dot11ProbeReq, RadioTap, sniff
-    import requests
+    from scapy.all import (
+        Dot11, Dot11ProbeReq, Dot11Elt, 
+        RadioTap, sniff, conf
+    )
 except ImportError:
-    print("Required packages not found. Please install dependencies:")
-    print("pip install scapy requests")
+    print("Error: Scapy library not found. Please install it using: pip install scapy")
     sys.exit(1)
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("probe_sniffer")
+
 # Global variables
-seen_macs: Dict[str, float] = {}  # MAC addresses and their last seen timestamp
-detected_probes: List[Dict] = []   # List to store all detected probe requests
-running = True                     # Flag to control sniffing loop
+detected_devices = {}  # Store MAC addresses and their probe requests
+should_stop = False    # Signal handler flag
 
-class Colors:
-    """ANSI color codes for terminal output."""
-    GREEN = '\033[92m'
-    BLUE = '\033[94m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    BOLD = '\033[1m'
-    END = '\033[0m'
 
-def parse_arguments() -> argparse.Namespace:
-    """Parse command line arguments."""
-    parser = argparse.ArgumentParser(description='Wi-Fi Probe Request Sniffer')
-    parser.add_argument('-i', '--interface', required=True, help='Wireless interface to use (must be in monitor mode)')
-    parser.add_argument('-t', '--timeout', type=int, default=5, help='Time in seconds to consider a duplicate (default: 5)')
-    parser.add_argument('-o', '--output', help='Output file to save results (CSV or JSON based on extension)')
-    parser.add_argument('-v', '--vendor', action='store_true', help='Lookup MAC vendor information')
-    parser.add_argument('-f', '--filter', action='store_true', help='Filter out duplicate probe requests')
-    return parser.parse_args()
+class ProbeRequestSniffer:
+    """Main class for capturing and processing Wi-Fi probe requests."""
 
-def signal_handler(sig, frame):
-    """Handle keyboard interrupts to gracefully exit the program."""
-    global running
-    print(f"\n{Colors.YELLOW}[!] Stopping packet capture...{Colors.END}")
-    running = False
-
-def check_monitor_mode(interface: str) -> bool:
-    """Check if the specified interface is in monitor mode."""
-    try:
-        with open(f"/sys/class/net/{interface}/type", 'r') as f:
-            if f.read().strip() == '803':  # 803 is the type for monitor mode
-                return True
-        return False
-    except FileNotFoundError:
-        print(f"{Colors.RED}[!] Interface {interface} not found{Colors.END}")
-        return False
-
-def lookup_vendor(mac_address: str) -> str:
-    """Look up the vendor of a MAC address using macvendors.com API."""
-    try:
-        # Format MAC address to match API requirements (first 6 characters)
-        mac_prefix = mac_address.replace(':', '').upper()[:6]
-        response = requests.get(f"https://api.macvendors.com/{mac_prefix}", timeout=2)
+    def __init__(self, interface: str, output_file: Optional[str] = None,
+                 output_format: str = "csv", vendor_lookup: bool = False,
+                 capture_duration: Optional[int] = None) -> None:
+        """
+        Initialize the probe request sniffer.
         
-        if response.status_code == 200:
-            return response.text
-        return "Unknown"
-    except Exception:
-        return "Lookup failed"
+        Args:
+            interface: Wireless interface to use (must support monitor mode)
+            output_file: Optional file to save results
+            output_format: Format for saving results (csv or json)
+            vendor_lookup: Whether to perform MAC vendor lookups
+            capture_duration: How long to capture (in seconds, None for indefinite)
+        """
+        self.interface = interface
+        self.output_file = output_file
+        self.output_format = output_format
+        self.vendor_lookup = vendor_lookup
+        self.capture_duration = capture_duration
+        self.mac_vendors = {}  # Cache for MAC vendor lookups
+        self.unique_macs = set()  # For deduplication
+        self.capture_all = False  # Default to not capturing empty SSIDs
+        
+        # Validate parameters
+        if output_format not in ["csv", "json"]:
+            raise ValueError("Output format must be 'csv' or 'json'")
+            
+        if self.vendor_lookup:
+            try:
+                import requests
+                self.requests = requests
+            except ImportError:
+                logger.warning("Requests library not installed. Vendor lookup disabled.")
+                self.vendor_lookup = False
 
-def process_packet(packet) -> Tuple[bool, Dict]:
-    """Process a packet and extract probe request information."""
-    if packet.haslayer(Dot11ProbeReq):
-        # Extract MAC address
-        mac_address = packet.addr2
+    def enable_monitor_mode(self) -> bool:
+        """
+        Put the wireless interface into monitor mode.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Check if interface exists
+            if self.interface not in conf.ifaces:
+                logger.error(f"Interface {self.interface} not found")
+                return False
+                
+            # Use airmon-ng to enable monitor mode (system call approach)
+            logger.info(f"Enabling monitor mode on {self.interface}")
+            os.system(f"sudo airmon-ng start {self.interface}")
+            
+            # Alternative: use iwconfig directly if airmon-ng is not available
+            # os.system(f"sudo ifconfig {self.interface} down")
+            # os.system(f"sudo iwconfig {self.interface} mode monitor")
+            # os.system(f"sudo ifconfig {self.interface} up")
+            
+            # Verify monitor mode is enabled (implementation specific)
+            # This is a simplified check and may need adaptation
+            time.sleep(1)  # Give the system time to apply changes
+            return True
+        except Exception as e:
+            logger.error(f"Failed to enable monitor mode: {e}")
+            return False
+
+    def disable_monitor_mode(self) -> None:
+        """Disable monitor mode and restore the interface to managed mode."""
+        try:
+            logger.info(f"Disabling monitor mode on {self.interface}")
+            os.system(f"sudo airmon-ng stop {self.interface}")
+            # Alternative: use iwconfig directly
+            # os.system(f"sudo ifconfig {self.interface} down")
+            # os.system(f"sudo iwconfig {self.interface} mode managed")
+            # os.system(f"sudo ifconfig {self.interface} up")
+        except Exception as e:
+            logger.error(f"Error disabling monitor mode: {e}")
+
+    def lookup_vendor(self, mac_address: str) -> str:
+        """
+        Look up the vendor of a MAC address.
+        
+        Args:
+            mac_address: MAC address to look up
+            
+        Returns:
+            str: Vendor name or "Unknown"
+        """
+        if not self.vendor_lookup:
+            return "Vendor lookup disabled"
+            
+        # Check cache first
+        if mac_address in self.mac_vendors:
+            return self.mac_vendors[mac_address]
+            
+        # Format MAC address (first 3 bytes/6 chars are the OUI)
+        oui = mac_address.replace(':', '').upper()[:6]
+        
+        try:
+            # API-based lookup with rate limiting
+            url = f"https://api.macvendors.com/{mac_address}"
+            response = self.requests.get(url, timeout=2)
+            
+            if response.status_code == 200:
+                vendor = response.text
+                self.mac_vendors[mac_address] = vendor
+                return vendor
+            elif response.status_code == 429:  # Rate limited
+                logger.warning("Rate limited by MAC vendor API")
+                time.sleep(1)  # Respect rate limiting
+                return "Rate limited"
+            else:
+                # Unknown vendor
+                self.mac_vendors[mac_address] = "Unknown"
+                return "Unknown"
+        except Exception as e:
+            logger.debug(f"Vendor lookup failed: {e}")
+            return "Lookup failed"
+
+    def process_packet(self, packet) -> None:
+        """
+        Process a captured packet and extract probe request information.
+        
+        Args:
+            packet: Scapy packet object
+        """
+        if not packet.haslayer(Dot11ProbeReq):
+            return
+            
+        # Extract MAC address (source)
+        mac_address = packet[Dot11].addr2
         if not mac_address:
-            return False, {}
+            return
+            
+        # Normalize MAC address format
+        mac_address = mac_address.lower()
         
-        # Extract timestamp
-        timestamp = time.time()
-        
-        # Extract SSID from the probe request
+        # Extract SSID (if present)
         ssid = ""
-        if packet.haslayer(Dot11):
-            if packet[Dot11].info:
-                ssid = packet[Dot11].info.decode('utf-8', errors='replace')
+        if packet.haslayer(Dot11Elt) and packet[Dot11Elt].ID == 0:
+            ssid = packet[Dot11Elt].info.decode('utf-8', errors='replace')
         
-        # Get signal strength if available
+        # Skip empty SSIDs (some devices send these when scanning)
+        if not ssid and not self.capture_all:
+            return
+            
+        # Signal strength (RSSI)
         rssi = None
         if packet.haslayer(RadioTap):
-            if hasattr(packet[RadioTap], 'dBm_AntSignal'):
-                rssi = packet[RadioTap].dBm_AntSignal
+            rssi = packet[RadioTap].dBm_AntSignal if hasattr(packet[RadioTap], 'dBm_AntSignal') else None
         
-        # Create a record of the probe request
-        probe_data = {
-            'timestamp': timestamp,
-            'datetime': datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'),
-            'mac_address': mac_address,
-            'ssid': ssid,
-            'rssi': rssi
-        }
+        # Timestamp
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         
-        return True, probe_data
-    
-    return False, {}
-
-def packet_handler(packet, args):
-    """Handle captured packets and display/store probe request information."""
-    global seen_macs, detected_probes
-    
-    success, probe_data = process_packet(packet)
-    if not success:
-        return
-    
-    mac_address = probe_data['mac_address']
-    ssid = probe_data['ssid']
-    timestamp = probe_data['timestamp']
-    
-    # Skip duplicate check if filtering is disabled
-    if not args.filter or mac_address not in seen_macs or (timestamp - seen_macs[mac_address]) > args.timeout:
-        seen_macs[mac_address] = timestamp
+        # Get vendor information if enabled
+        vendor = self.lookup_vendor(mac_address) if self.vendor_lookup else "N/A"
         
-        # Look up vendor if requested
-        if args.vendor:
-            probe_data['vendor'] = lookup_vendor(mac_address)
-        
-        # Store the detected probe
-        detected_probes.append(probe_data)
-        
-        # Print to console
-        if args.vendor and 'vendor' in probe_data:
-            print(f"{Colors.GREEN}[+] {probe_data['datetime']} {Colors.BLUE}{mac_address}{Colors.END} "
-                  f"({Colors.YELLOW}{probe_data['vendor']}{Colors.END}) "
-                  f"searching for: {Colors.BOLD}{ssid or '<Broadcast>'}{Colors.END}")
+        # Store information (deduplication with update)
+        if mac_address not in detected_devices:
+            detected_devices[mac_address] = {
+                'first_seen': timestamp,
+                'last_seen': timestamp,
+                'ssids': set(),
+                'vendor': vendor,
+                'rssi': rssi
+            }
         else:
-            print(f"{Colors.GREEN}[+] {probe_data['datetime']} {Colors.BLUE}{mac_address}{Colors.END} "
-                  f"searching for: {Colors.BOLD}{ssid or '<Broadcast>'}{Colors.END}")
+            detected_devices[mac_address]['last_seen'] = timestamp
+            if rssi is not None:
+                detected_devices[mac_address]['rssi'] = rssi
+        
+        # Add SSID to the set (automatically deduplicates)
+        if ssid:
+            detected_devices[mac_address]['ssids'].add(ssid)
+            
+        # Only display/log if this is a new MAC or new SSID
+        is_new = False
+        mac_ssid_pair = (mac_address, ssid)
+        if mac_ssid_pair not in self.unique_macs:
+            self.unique_macs.add(mac_ssid_pair)
+            is_new = True
+            
+        if is_new:
+            # Print to console
+            ssid_str = f'"{ssid}"' if ssid else "[No SSID]"
+            rssi_str = f"{rssi} dBm" if rssi is not None else "N/A"
+            print(f"[{timestamp}] MAC: {mac_address} | SSID: {ssid_str} | RSSI: {rssi_str} | Vendor: {vendor}")
 
-def save_results(output_file: str, data: List[Dict]):
-    """Save detected probe requests to a file (CSV or JSON)."""
-    if not data:
-        print(f"{Colors.YELLOW}[!] No data to save{Colors.END}")
-        return
-    
-    file_ext = os.path.splitext(output_file)[1].lower()
-    
-    try:
-        if file_ext == '.json':
-            with open(output_file, 'w') as f:
-                json.dump(data, f, indent=4)
-        elif file_ext == '.csv':
-            with open(output_file, 'w', newline='') as f:
-                # Determine all possible fields from the data
-                fieldnames = set()
-                for entry in data:
-                    fieldnames.update(entry.keys())
-                
-                writer = csv.DictWriter(f, fieldnames=list(fieldnames))
-                writer.writeheader()
-                writer.writerows(data)
-        else:
-            print(f"{Colors.RED}[!] Unsupported file format. Use .csv or .json{Colors.END}")
+    def start_capture(self) -> None:
+        """Start capturing probe requests."""
+        global should_stop
+        
+        # Setup signal handler for clean exit
+        def signal_handler(sig, frame):
+            global should_stop
+            logger.info("Stopping capture...")
+            should_stop = True
+            
+        signal.signal(signal.SIGINT, signal_handler)
+        signal.signal(signal.SIGTERM, signal_handler)
+        
+        logger.info(f"Starting capture on interface {self.interface}")
+        logger.info("Press Ctrl+C to stop")
+        
+        # Setup capture filter
+        capture_filter = "type mgt subtype probe-req"
+        
+        # Start time
+        start_time = time.time()
+        
+        try:
+            # Start packet capture
+            sniff(
+                iface=self.interface,
+                prn=self.process_packet,
+                filter=capture_filter,
+                store=0,  # Don't store packets in memory
+                stop_filter=lambda _: should_stop,
+                timeout=self.capture_duration
+            )
+        except Exception as e:
+            logger.error(f"Error during packet capture: {e}")
+        finally:
+            end_time = time.time()
+            duration = int(end_time - start_time)
+            
+            logger.info(f"Capture complete. Duration: {duration} seconds")
+            logger.info(f"Detected {len(detected_devices)} unique devices")
+            
+            # Save results if output file specified
+            if self.output_file:
+                self.save_results()
+
+    def save_results(self) -> None:
+        """Save captured data to file in specified format."""
+        if not self.output_file:
             return
-        
-        print(f"{Colors.GREEN}[+] Results saved to {output_file}{Colors.END}")
-    except Exception as e:
-        print(f"{Colors.RED}[!] Error saving results: {e}{Colors.END}")
+            
+        try:
+            if self.output_format == "csv":
+                self._save_csv()
+            else:  # JSON
+                self._save_json()
+                
+            logger.info(f"Results saved to {self.output_file}")
+        except Exception as e:
+            logger.error(f"Error saving results: {e}")
+
+    def _save_csv(self) -> None:
+        """Save results in CSV format."""
+        with open(self.output_file, 'w', newline='') as csvfile:
+            fieldnames = ['mac_address', 'first_seen', 'last_seen', 
+                         'ssids', 'vendor', 'rssi']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            
+            writer.writeheader()
+            for mac, data in detected_devices.items():
+                writer.writerow({
+                    'mac_address': mac,
+                    'first_seen': data['first_seen'],
+                    'last_seen': data['last_seen'],
+                    'ssids': ', '.join(data['ssids']),
+                    'vendor': data['vendor'],
+                    'rssi': data['rssi'] if data['rssi'] is not None else 'N/A'
+                })
+
+    def _save_json(self) -> None:
+        """Save results in JSON format."""
+        # Convert sets to lists for JSON serialization
+        json_data = {}
+        for mac, data in detected_devices.items():
+            json_data[mac] = {
+                'first_seen': data['first_seen'],
+                'last_seen': data['last_seen'],
+                'ssids': list(data['ssids']),
+                'vendor': data['vendor'],
+                'rssi': data['rssi']
+            }
+            
+        with open(self.output_file, 'w') as jsonfile:
+            json.dump(json_data, jsonfile, indent=4)
+
 
 def main():
-    """Main function to capture and process probe requests."""
-    global running
-    
-    # Register signal handler for clean exit
-    signal.signal(signal.SIGINT, signal_handler)
-    
+    """Main entry point for the program."""
     # Parse command line arguments
-    args = parse_arguments()
+    parser = argparse.ArgumentParser(description="Wi-Fi Probe Request Sniffer")
     
-    # Check if interface exists and is in monitor mode
-    if not check_monitor_mode(args.interface):
-        print(f"{Colors.RED}[!] Interface {args.interface} is not in monitor mode or doesn't exist{Colors.END}")
-        print(f"{Colors.YELLOW}[i] Use 'sudo airmon-ng start {args.interface}' to enable monitor mode{Colors.END}")
-        sys.exit(1)
+    parser.add_argument("-i", "--interface", required=True,
+                        help="Wireless interface to use (must support monitor mode)")
+    parser.add_argument("-o", "--output", 
+                        help="Output file to save results")
+    parser.add_argument("-f", "--format", choices=["csv", "json"], default="csv",
+                        help="Output format (csv or json)")
+    parser.add_argument("-d", "--duration", type=int,
+                        help="Capture duration in seconds")
+    parser.add_argument("-v", "--vendor-lookup", action="store_true",
+                        help="Enable MAC address vendor lookup")
+    parser.add_argument("-a", "--all", action="store_true",
+                        help="Capture all probe requests (including empty SSIDs)")
     
-    print(f"{Colors.GREEN}[+] Starting Wi-Fi probe request sniffer on {args.interface}{Colors.END}")
-    print(f"{Colors.YELLOW}[i] Press Ctrl+C to stop{Colors.END}")
+    args = parser.parse_args()
     
+    # Create and start sniffer
     try:
-        # Start packet sniffing
-        sniff(
-            iface=args.interface,
-            prn=lambda packet: packet_handler(packet, args),
-            store=0,
-            stop_filter=lambda _: not running
+        sniffer = ProbeRequestSniffer(
+            interface=args.interface,
+            output_file=args.output,
+            output_format=args.format,
+            vendor_lookup=args.vendor_lookup,
+            capture_duration=args.duration
         )
+        
+        # Pass the capture_all parameter
+        sniffer.capture_all = args.all
+        
+        # Enable monitor mode
+        if not sniffer.enable_monitor_mode():
+            logger.error("Failed to enable monitor mode. Exiting.")
+            return 1
+            
+        # Start capturing
+        sniffer.start_capture()
+        
+        # Disable monitor mode when done
+        sniffer.disable_monitor_mode()
+        
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        if 'sniffer' in locals():
+            sniffer.disable_monitor_mode()
     except Exception as e:
-        print(f"{Colors.RED}[!] Error during packet capture: {e}{Colors.END}")
-    
-    # Save results if an output file was specified
-    if args.output and detected_probes:
-        save_results(args.output, detected_probes)
-    
-    print(f"{Colors.GREEN}[+] Captured {len(detected_probes)} unique probe requests{Colors.END}")
+        logger.error(f"An error occurred: {e}")
+        return 1
+        
+    return 0
+
 
 if __name__ == "__main__":
-    # Check if running as root
-    if os.geteuid() != 0:
-        print(f"{Colors.RED}[!] This script must be run as root (sudo){Colors.END}")
-        sys.exit(1)
-    
-    main()
+    sys.exit(main())
