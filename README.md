@@ -141,6 +141,121 @@ aa:bb:cc:dd:ee:ff,2025-03-25 12:34:56,2025-03-25 12:35:12,Home_Network,Samsung E
 
 3. **Compatible Adapters**: Not all wireless adapters support monitor mode. Popular compatible adapters include those with Atheros AR9271 and Realtek RTL8812AU chipsets.
 
+
+## Example of Improved Function Documentation
+```python
+def lookup_vendor(mac_address: str) -> str:
+    """
+    Look up the vendor of a MAC address using the macvendors.com API.
+    
+    Args:
+        mac_address (str): The MAC address to look up in format "XX:XX:XX:XX:XX:XX"
+        
+    Returns:
+        str: The vendor name if found, or status message ("Unknown", "Lookup failed")
+        
+    Raises:
+        ConnectionError: If the API cannot be reached
+        
+    Note:
+        This function has rate limiting built in to respect the API's usage policy
+    """
+    try:
+        # Format MAC address to match API requirements (first 6 characters)
+        mac_prefix = mac_address.replace(':', '').upper()[:6]
+        response = requests.get(f"https://api.macvendors.com/{mac_prefix}", timeout=2)
+        
+        if response.status_code == 200:
+            return response.text
+        elif response.status_code == 429:  # Rate limited
+            time.sleep(1)  # Respect rate limiting
+            return "Rate limited"
+        return "Unknown"
+    except Exception:
+        return "Lookup failed"
+
+```
+## Example of Error Handling Improvement
+```pyton 
+def process_packet(packet) -> Tuple[bool, Dict]:
+    """Process a packet and extract probe request information."""
+    try:
+        if packet.haslayer(Dot11ProbeReq):
+            # Extract MAC address
+            mac_address = packet.addr2
+            if not mac_address:
+                logger.debug("Packet missing source MAC address")
+                return False, {}
+            
+            # Extract timestamp
+            timestamp = time.time()
+            
+            # Extract SSID from the probe request
+            ssid = ""
+            if packet.haslayer(Dot11):
+                if packet[Dot11].info:
+                    try:
+                        ssid = packet[Dot11].info.decode('utf-8', errors='replace')
+                    except UnicodeDecodeError:
+                        logger.warning(f"Could not decode SSID for packet from {mac_address}")
+                        ssid = "<Undecodable SSID>"
+            
+            # Get signal strength if available
+            rssi = None
+            if packet.haslayer(RadioTap):
+                if hasattr(packet[RadioTap], 'dBm_AntSignal'):
+                    rssi = packet[RadioTap].dBm_AntSignal
+            
+            # Create a record of the probe request
+            probe_data = {
+                'timestamp': timestamp,
+                'datetime': datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S'),
+                'mac_address': mac_address,
+                'ssid': ssid,
+                'rssi': rssi
+            }
+            
+            return True, probe_data
+    except Exception as e:
+        logger.error(f"Error processing packet: {e}")
+    
+    return False, {}
+
+```
+## Example of Input Validation
+```python
+def check_interface(interface: str) -> bool:
+    """
+    Validate if the specified wireless interface exists and is usable.
+    
+    Args:
+        interface (str): The name of the wireless interface to check
+        
+    Returns:
+        bool: True if the interface exists and is usable, False otherwise
+    """
+    # Check if interface name has valid characters
+    if not re.match(r'^[a-zA-Z0-9_\-]+$', interface):
+        print(f"{Colors.RED}[!] Invalid interface name: {interface}{Colors.END}")
+        return False
+        
+    # Check if interface exists
+    if not os.path.exists(f"/sys/class/net/{interface}"):
+        print(f"{Colors.RED}[!] Interface {interface} does not exist{Colors.END}")
+        return False
+        
+    # Check if interface is wireless
+    try:
+        with open(f"/sys/class/net/{interface}/type", 'r') as f:
+            if f.read().strip() not in ['1', '803']:  # 1=Ethernet, 803=Monitor Mode
+                print(f"{Colors.RED}[!] Interface {interface} is not a wireless interface{Colors.END}")
+                return False
+    except:
+        print(f"{Colors.RED}[!] Cannot determine interface type for {interface}{Colors.END}")
+        return False
+        
+    return True
+```
 ## Legal and Privacy Considerations
 
 - Capturing wireless traffic may be subject to legal restrictions in some jurisdictions. Only use this tool on networks you own or have permission to monitor.
