@@ -1,0 +1,18 @@
+# Environment variables and secrets
+.env
+*.pem
+*.key
+config.json
+credentials.yml
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+ENV/
+
+# Test data that might contain sensitive information
+test_data/
