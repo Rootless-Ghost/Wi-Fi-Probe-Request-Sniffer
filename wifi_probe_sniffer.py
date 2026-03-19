@@ -119,6 +119,29 @@ class ProbeRequestSniffer:
         except Exception as e:
             logger.error(f"Error disabling monitor mode: {e}")
 
+    def _mask_mac(self, mac_address: str) -> str:
+        """
+        Return a privacy-preserving representation of a MAC address for logging.
+
+        Keeps the OUI (first three octets) and last octet, masking the middle
+        so devices can still be roughly distinguished without exposing the
+        full identifier.
+        """
+        if not mac_address:
+            return "N/A"
+        parts = mac_address.split(":")
+        if len(parts) != 6:
+            # Fallback: return a shortened version if format is unexpected
+            return mac_address[:4] + "**" if len(mac_address) > 4 else "****"
+        return ":".join([
+            parts[0],
+            parts[1],
+            parts[2],
+            "**",
+            "**",
+            parts[5],
+        ])
+
     def lookup_vendor(self, mac_address: str) -> str:
         """
         Look up the vendor of a MAC address.
@@ -227,7 +250,8 @@ class ProbeRequestSniffer:
             # Print to console
             ssid_str = f'"{ssid}"' if ssid else "[No SSID]"
             rssi_str = f"{rssi} dBm" if rssi is not None else "N/A"
-            print(f"[{timestamp}] MAC: {mac_address} | SSID: {ssid_str} | RSSI: {rssi_str} | Vendor: {vendor}")
+            masked_mac = self._mask_mac(mac_address)
+            print(f"[{timestamp}] MAC: {masked_mac} | SSID: {ssid_str} | RSSI: {rssi_str} | Vendor: {vendor}")
 
     def start_capture(self) -> None:
         """Start capturing probe requests."""
