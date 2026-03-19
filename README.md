@@ -18,6 +18,14 @@ A Python tool for capturing and analyzing Wi-Fi probe requests from nearby devic
 
 When wireless devices search for networks, they broadcast probe request frames containing information about previously connected networks. This tool captures these frames, extracts valuable data (SSIDs, MAC addresses), and displays/logs this information in real-time.
 
+## Screenshots
+
+
+
+
+
+
+
 ## Features
 
 - Captures and analyzes wireless probe request frames
