@@ -1,6 +1,8 @@
-# Wi-Fi Probe Request Sniffer Roadmap
+# Wi-Fi Probe Request Sniffer Roadmap 
 
 This document outlines the planned features and improvements for future releases.
+
+Features are planned but not guaranteed — contributions welcome.
 
 ## Short-term Goals (v1.1.0)
 
