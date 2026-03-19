@@ -18,6 +18,7 @@ import sys
 import time
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple
+import hashlib
 
 try:
     from scapy.all import (
@@ -123,24 +124,19 @@ class ProbeRequestSniffer:
         """
         Return a privacy-preserving representation of a MAC address for logging.
 
-        Keeps the OUI (first three octets) and last octet, masking the middle
-        so devices can still be roughly distinguished without exposing the
-        full identifier.
+        The returned value is a non-reversible hash of the MAC address so that
+        devices can still be distinguished without exposing the underlying
+        hardware identifier.
         """
         if not mac_address:
             return "N/A"
-        parts = mac_address.split(":")
-        if len(parts) != 6:
-            # Fallback: return a shortened version if format is unexpected
-            return mac_address[:4] + "**" if len(mac_address) > 4 else "****"
-        return ":".join([
-            parts[0],
-            parts[1],
-            parts[2],
-            "**",
-            "**",
-            parts[5],
-        ])
+
+        # Normalize MAC address format before hashing
+        normalized_mac = mac_address.strip().lower()
+        digest = hashlib.sha256(normalized_mac.encode("utf-8")).hexdigest()
+
+        # Truncate the hash for readability while remaining non-reversible
+        return f"hash:{digest[:10]}"
 
     def lookup_vendor(self, mac_address: str) -> str:
         """
