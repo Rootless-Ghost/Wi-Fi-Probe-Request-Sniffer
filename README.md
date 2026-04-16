@@ -272,6 +272,14 @@ def check_interface(interface: str) -> bool:
 - Capturing wireless traffic may be subject to legal restrictions in some jurisdictions. Only use this tool on networks you own or have permission to monitor.
 - This tool captures MAC addresses which can potentially be used to track individuals. Consider anonymizing this data for ethical use.
 
+  
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+<div align="center">
+
+**Built by [Rootless-Ghost](https://github.com/Rootless-Ghost)** 
+
+</div>
+
