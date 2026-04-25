@@ -1,5 +1,9 @@
 <div align="center">
 
+⚠️ This tool has been superseded by WifiForge, which includes probe request sniffing alongside full 802.11 attack detection.
+
+
+
 # Wi-Fi Probe Request Sniffer
 
 A Python tool for capturing and analyzing Wi-Fi probe requests from nearby devices.
