@@ -1,6 +1,7 @@
 <div align="center">
 
-⚠️ This tool has been superseded by WifiForge, which includes probe request sniffing alongside full 802.11 attack detection.
+> ⚠️ **Note:** This tool has been superseded by [WifiForge](https://github.com/Rootless-Ghost/WifiForge), 
+> which includes probe request sniffing as part of a full 802.11 attack detection suite.
 
 
 
