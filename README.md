@@ -1,7 +1,9 @@
 <div align="center">
 
-> ⚠️ **Note:** **This tool has been superseded by [WifiForge](https://github.com/Rootless-Ghost/WifiForge),** 
-> **which includes probe request sniffing as part of a full 802.11 attack detection suite.**
+> ⚠️ **Archived.** This tool captured client probe requests for SSID and MAC vendor
+> analysis. [WifiForge](https://github.com/Rootless-Ghost/WifiForge) covers AP-side wireless analysis (beacon scanning,
+> deauth detection, WPS and encryption assessment) but does not implement
+> probe request capture.
 
 
 
