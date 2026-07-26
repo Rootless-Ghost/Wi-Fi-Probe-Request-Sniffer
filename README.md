@@ -64,7 +64,7 @@ When wireless devices search for networks, they broadcast probe request frames c
 1. Clone this repository:
    ```bash
    git clone https://github.com/Rootless-Ghost/Wi-Fi-Probe-Request-Sniffer.git
-   cd wifi-probe-sniffer
+   cd Wi-Fi-Probe-Request-Sniffer
    ```
 
 2. Install the required packages:
